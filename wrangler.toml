@@ -1,0 +1,6 @@
+name = "fieldy-webhook"
+compatibility_date = "2023-12-01"
+
+[vars]
+# NOTION_API_KEY = "..." # Set in .dev.vars for local, secrets for prod
+# NOTION_DATABASE_ID = "..."

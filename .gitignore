@@ -4,3 +4,7 @@ dist
 .env
 .wrangler
 coverage
+
+# Internal documentation
+contexts/
+WALKTHROUGH.md

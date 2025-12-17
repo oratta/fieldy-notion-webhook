@@ -19,10 +19,10 @@ export class NotionService {
     private databaseId: string;
     private groupingMode: GroupingMode;
 
-    constructor(apiKey: string, databaseId: string, groupingMode: string = 'none') {
+    constructor(apiKey: string, databaseId: string, groupingMode: string = 'hourly') {
         this.client = new Client({ auth: apiKey });
         this.databaseId = databaseId;
-        this.groupingMode = (groupingMode as GroupingMode) || 'none';
+        this.groupingMode = (groupingMode as GroupingMode) || 'hourly';
     }
 
     async saveTranscription(data: FieldyPayload) {
@@ -35,20 +35,34 @@ export class NotionService {
 
     private async appendOrCreatePage(data: FieldyPayload) {
         const dateObj = new Date(data.date);
-        const existingPage = await this.findExistingPage(dateObj);
+        const { dateStr, hour } = this.getDateAndHour(dateObj);
+
+        const existingPage = await this.findExistingPage(dateStr, hour);
 
         if (existingPage) {
             console.log(`Found existing page: ${existingPage.id}, appending...`);
             await this.appendToPage(existingPage.id, data);
         } else {
             console.log('No existing page found, creating new...');
-            await this.createGroupedPage(data);
+            await this.createGroupedPage(data, dateStr, hour);
         }
     }
 
-    private async findExistingPage(date: Date): Promise<{ id: string } | null> {
-        const { start, end } = this.getDateRange(date);
+    private getDateAndHour(date: Date): { dateStr: string; hour: number } {
+        // Convert to JST
+        const jstDate = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
 
+        const year = jstDate.getFullYear();
+        const month = String(jstDate.getMonth() + 1).padStart(2, '0');
+        const day = String(jstDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+
+        const hour = this.groupingMode === 'daily' ? -1 : jstDate.getHours();
+
+        return { dateStr, hour };
+    }
+
+    private async findExistingPage(dateStr: string, hour: number): Promise<{ id: string } | null> {
         try {
             const response = await this.client.databases.query({
                 database_id: this.databaseId,
@@ -57,23 +71,17 @@ export class NotionService {
                         {
                             property: 'Date',
                             date: {
-                                on_or_after: start,
+                                equals: dateStr,
                             },
                         },
                         {
-                            property: 'Date',
-                            date: {
-                                before: end,
+                            property: 'Hour',
+                            number: {
+                                equals: hour,
                             },
                         },
                     ],
                 },
-                sorts: [
-                    {
-                        property: 'Date',
-                        direction: 'descending',
-                    },
-                ],
                 page_size: 1,
             });
 
@@ -85,40 +93,6 @@ export class NotionService {
             console.error('Error finding existing page:', error);
             return null;
         }
-    }
-
-    private getDateRange(date: Date): { start: string; end: string } {
-        const jstDate = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-
-        if (this.groupingMode === 'daily') {
-            const startOfDay = new Date(jstDate);
-            startOfDay.setHours(0, 0, 0, 0);
-
-            const endOfDay = new Date(startOfDay);
-            endOfDay.setDate(endOfDay.getDate() + 1);
-
-            return {
-                start: this.toISOStringWithTimezone(startOfDay),
-                end: this.toISOStringWithTimezone(endOfDay),
-            };
-        } else {
-            // hourly
-            const startOfHour = new Date(jstDate);
-            startOfHour.setMinutes(0, 0, 0);
-
-            const endOfHour = new Date(startOfHour);
-            endOfHour.setHours(endOfHour.getHours() + 1);
-
-            return {
-                start: this.toISOStringWithTimezone(startOfHour),
-                end: this.toISOStringWithTimezone(endOfHour),
-            };
-        }
-    }
-
-    private toISOStringWithTimezone(date: Date): string {
-        // Convert to ISO string format for Notion API
-        return date.toISOString();
     }
 
     private async appendToPage(pageId: string, data: FieldyPayload) {
@@ -139,9 +113,8 @@ export class NotionService {
         }
     }
 
-    private async createGroupedPage(data: FieldyPayload) {
-        const dateObj = new Date(data.date);
-        const title = this.getGroupedTitle(dateObj);
+    private async createGroupedPage(data: FieldyPayload, dateStr: string, hour: number) {
+        const title = this.getGroupedTitle(dateStr, hour);
         const blocks = this.createBlocks(data, true);
 
         try {
@@ -152,7 +125,10 @@ export class NotionService {
                         title: [{ text: { content: title } }],
                     },
                     'Date': {
-                        date: { start: data.date },
+                        date: { start: dateStr },
+                    },
+                    'Hour': {
+                        number: hour,
                     },
                 },
                 children: blocks.slice(0, 100),
@@ -160,7 +136,7 @@ export class NotionService {
 
             // If more than 100 blocks, append the rest
             if (blocks.length > 100) {
-                const page = await this.findExistingPage(dateObj);
+                const page = await this.findExistingPage(dateStr, hour);
                 if (page) {
                     for (let i = 100; i < blocks.length; i += 100) {
                         const batch = blocks.slice(i, i + 100);
@@ -177,32 +153,30 @@ export class NotionService {
         }
     }
 
-    private getGroupedTitle(date: Date): string {
-        const options: Intl.DateTimeFormatOptions = {
-            timeZone: 'Asia/Tokyo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-        };
+    private getGroupedTitle(dateStr: string, hour: number): string {
+        // Convert YYYY-MM-DD to YYYY/MM/DD
+        const formattedDate = dateStr.replace(/-/g, '/');
 
-        if (this.groupingMode === 'hourly') {
-            options.hour = '2-digit';
-            return `Transcription ${date.toLocaleString('ja-JP', options)}:00`;
+        if (this.groupingMode === 'daily' || hour === -1) {
+            return `${formattedDate} 00:00-23:59`;
         }
 
-        return `Transcription ${date.toLocaleString('ja-JP', options)}`;
+        const hourStr = String(hour).padStart(2, '0');
+        return `${formattedDate} ${hourStr}:00-${hourStr}:59`;
     }
 
     private async createNewPage(data: FieldyPayload) {
         const dateObj = new Date(data.date);
-        const title = `Transcription ${dateObj.toLocaleString('ja-JP', {
-            timeZone: 'Asia/Tokyo',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-        })}`;
+        const jstDate = new Date(dateObj.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+
+        const year = jstDate.getFullYear();
+        const month = String(jstDate.getMonth() + 1).padStart(2, '0');
+        const day = String(jstDate.getDate()).padStart(2, '0');
+        const hours = String(jstDate.getHours()).padStart(2, '0');
+        const minutes = String(jstDate.getMinutes()).padStart(2, '0');
+
+        const title = `${year}/${month}/${day} ${hours}:${minutes}`;
+        const dateStr = `${year}-${month}-${day}`;
 
         const blocks = this.createBlocks(data, false);
 
@@ -214,7 +188,10 @@ export class NotionService {
                         title: [{ text: { content: title } }],
                     },
                     'Date': {
-                        date: { start: data.date },
+                        date: { start: dateStr },
+                    },
+                    'Hour': {
+                        number: jstDate.getHours(),
                     },
                 },
                 children: blocks.slice(0, 100),

@@ -7,6 +7,7 @@
 - Fieldyからの文字起こしWebhookを受信
 - 話者分離（Speaker Diarization）に対応
 - Notionデータベースへ自動保存
+- **ページ集約機能**: 日単位/時間単位でページをまとめて一覧性を向上
 - Cloudflare Workers無料プランで運用可能
 
 ## 必要なもの
@@ -61,7 +62,21 @@ cp .dev.vars.example .dev.vars
 ```ini
 NOTION_API_KEY=secret_xxxxxxxxxxxx
 NOTION_DATABASE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+GROUPING_MODE=daily
 ```
+
+| 変数名 | 説明 |
+|--------|------|
+| `NOTION_API_KEY` | Notionインテグレーションのシークレット |
+| `NOTION_DATABASE_ID` | 保存先データベースのID（UUID形式） |
+| `GROUPING_MODE` | ページ集約モード（下記参照） |
+
+**GROUPING_MODE オプション**：
+| 値 | 動作 |
+|----|------|
+| `none` | Webhook毎に新規ページ作成 |
+| `daily` | 1日1ページにまとめて追記 |
+| `hourly` | 1時間1ページにまとめて追記（デフォルト） |
 
 **データベースIDの取得方法**：
 NotionのデータベースURL `https://notion.so/workspace/xxxxxxxx...` の32文字をUUID形式（8-4-4-4-12）に変換
@@ -91,6 +106,7 @@ npm run deploy
 ```bash
 npx wrangler secret put NOTION_API_KEY
 npx wrangler secret put NOTION_DATABASE_ID
+npx wrangler secret put GROUPING_MODE
 ```
 
 ### 6. FieldyでWebhook URLを設定

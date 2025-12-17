@@ -5,8 +5,8 @@ import app from './index';
 vi.mock('./notion', () => {
     return {
         NotionService: class {
-            constructor(apiKey: string, dbId: string) { }
-            async createTranscriptionPage(data: any) {
+            constructor(apiKey: string, dbId: string, groupingMode: string) { }
+            async saveTranscription(data: any) {
                 return Promise.resolve();
             }
         },

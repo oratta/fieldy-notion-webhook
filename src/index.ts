@@ -4,6 +4,7 @@ import { NotionService, FieldyPayload } from './notion';
 type Bindings = {
     NOTION_API_KEY: string;
     NOTION_DATABASE_ID: string;
+    GROUPING_MODE?: string; // 'none' | 'daily' | 'hourly'
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -25,8 +26,9 @@ app.post('/webhook', async (c) => {
             return c.json({ error: 'Server configuration error' }, 500);
         }
 
-        const notion = new NotionService(apiKey, dbId);
-        await notion.createTranscriptionPage(payload);
+        const groupingMode = c.env.GROUPING_MODE || 'hourly';
+        const notion = new NotionService(apiKey, dbId, groupingMode);
+        await notion.saveTranscription(payload);
 
         return c.json({ message: 'Success' }, 200);
     } catch (e: any) {
